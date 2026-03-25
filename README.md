@@ -1,6 +1,6 @@
 # LexiCog
 
-LexiCog is a Tauri desktop app for quick language lookup, translation, OCR, and language learning workflows.
+LexiCog is an AI-powered, agile shortcut-driven Tauri desktop app for frictionless language lookup, translation, OCR, and learning workflows.
 
 It is designed for fast popup workflows:
 - look up a selected word or phrase
