@@ -34,7 +34,7 @@ jobs:
         run: |
           expected="${GITHUB_REF_NAME#v}"
           package_version="$(node -p "require('./package.json').version")"
-          cargo_version="$(sed -n 's/^version = \"\\(.*\\)\"$/\\1/p' src-tauri/Cargo.toml | head -n 1)"
+          cargo_version="$(grep -m1 '^version = "' src-tauri/Cargo.toml | cut -d'"' -f2)"
           tauri_version="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
           test "$package_version" = "$expected" || { echo "package.json version $package_version does not match tag $expected"; exit 1; }
           test "$cargo_version" = "$expected" || { echo "Cargo.toml version $cargo_version does not match tag $expected"; exit 1; }
