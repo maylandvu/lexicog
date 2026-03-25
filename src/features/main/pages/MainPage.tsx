@@ -1,4 +1,9 @@
 import { useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
+import { isTauri } from '@tauri-apps/api/core';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { open } from '@tauri-apps/plugin-shell';
+import { check, type Update } from '@tauri-apps/plugin-updater';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { useWindowSelectionTracker } from '@/stores/selection';
@@ -10,6 +15,7 @@ import {
 } from '../components';
 import { ConfigureNav, ConfigureContent, type ConfigureSectionKey } from '../components/configure';
 import { Button } from '@/shared/components/ui/button';
+import { useNotification } from '@/shared/components/feedback/useNotification';
 import {
   readConfigFromStore,
   resetTargetLangOfLexicalEntryLookup,
@@ -158,9 +164,128 @@ function ReviewSection() {
   return <ReviewSession className="h-full" />;
 }
 
+const RELEASE_NOTES_URL = 'https://github.com/maylandvu/lexicog/releases';
+
+function formatUpdateVersion(version: string): string {
+  return version.startsWith('v') ? version : `v${version}`;
+}
+
 function AboutSection() {
   const { t } = useTranslation();
-  const appVersion = import.meta.env.VITE_APP_VERSION || '0.1.0';
+  const { notify } = useNotification();
+  const [appVersion, setAppVersion] = useState(import.meta.env.VITE_APP_VERSION || '0.1.0');
+  const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    void getVersion()
+      .then(setAppVersion)
+      .catch((error) => {
+        console.error('[AboutSection] failed to read app version', error);
+      });
+  }, []);
+
+  async function handleOpenReleaseNotes() {
+    try {
+      await open(RELEASE_NOTES_URL);
+    } catch (error) {
+      notify({
+        type: 'error',
+        message: t('about.releaseLogOpenFailed'),
+        error,
+      });
+    }
+  }
+
+  async function handleCheckForUpdates() {
+    if (isCheckingForUpdates) {
+      return;
+    }
+
+    if (!isTauri()) {
+      notify({
+        type: 'warning',
+        message: t('about.updaterUnavailable'),
+      });
+      return;
+    }
+
+    let update: Update | null = null;
+
+    try {
+      setIsCheckingForUpdates(true);
+      setUpdateStatus(t('about.updateChecking'));
+
+      update = await check({ timeout: 30_000 });
+
+      if (!update) {
+        const message = t('about.upToDate');
+        setUpdateStatus(message);
+        notify({ type: 'success', message });
+        return;
+      }
+
+      const versionLabel = formatUpdateVersion(update.version);
+      const availableMessage = t('about.updateAvailable', { version: versionLabel });
+      setUpdateStatus(availableMessage);
+      notify({ type: 'info', message: availableMessage });
+
+      let downloaded = 0;
+      let contentLength = 0;
+
+      await update.downloadAndInstall((event) => {
+        switch (event.event) {
+          case 'Started':
+            contentLength = event.data.contentLength ?? 0;
+            setUpdateStatus(
+              contentLength > 0
+                ? t('about.updateDownloading', { version: versionLabel, progress: 0 })
+                : t('about.updateDownloadingUnknown', { version: versionLabel }),
+            );
+            break;
+          case 'Progress':
+            downloaded += event.data.chunkLength;
+            if (contentLength > 0) {
+              const progress = Math.min(100, Math.round((downloaded / contentLength) * 100));
+              setUpdateStatus(
+                t('about.updateDownloading', { version: versionLabel, progress }),
+              );
+            } else {
+              setUpdateStatus(t('about.updateDownloadingUnknown', { version: versionLabel }));
+            }
+            break;
+          case 'Finished':
+            setUpdateStatus(t('about.updateInstalling', { version: versionLabel }));
+            break;
+        }
+      });
+
+      const installedMessage = t('about.updateInstalled', { version: versionLabel });
+      setUpdateStatus(installedMessage);
+      notify({
+        type: 'success',
+        message: installedMessage,
+      });
+      await relaunch();
+    } catch (error) {
+      const message = t('about.updateFailed');
+      setUpdateStatus(message);
+      notify({
+        type: 'error',
+        message,
+        error,
+      });
+    } finally {
+      setIsCheckingForUpdates(false);
+      if (update) {
+        await update.close().catch(() => undefined);
+      }
+    }
+  }
 
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -175,10 +300,21 @@ function AboutSection() {
           {t('about.version', { version: appVersion })}
         </p>
         <div className="flex items-center justify-center gap-4">
-          <Button type="button" variant="link">{t('about.releaseLog')}</Button>
-          <Button type="button" variant="link">{t('about.checkForUpdates')}</Button>
-          <Button type="button" variant="link">{t('about.contact')}</Button>
+          <Button type="button" variant="link" onClick={() => void handleOpenReleaseNotes()}>
+            {t('about.releaseLog')}
+          </Button>
+          <Button
+            type="button"
+            variant="link"
+            disabled={isCheckingForUpdates}
+            onClick={() => void handleCheckForUpdates()}
+          >
+            {isCheckingForUpdates ? t('about.checkingForUpdates') : t('about.checkForUpdates')}
+          </Button>
         </div>
+        {updateStatus ? (
+          <p className="text-xs text-[var(--color-text-secondary)]">{updateStatus}</p>
+        ) : null}
       </div>
     </div>
   );

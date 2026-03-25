@@ -1,5 +1,5 @@
 // src/types/notification.ts
-export type NotificationType = 'error' | 'warning' | 'info';
+export type NotificationType = 'error' | 'warning' | 'info' | 'success';
 
 export interface NotificationPayload {
   type: NotificationType;
@@ -9,5 +9,4 @@ export interface NotificationPayload {
 }
 
 export type OnNotify = (payload: NotificationPayload) => void;
-
 

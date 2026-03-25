@@ -122,7 +122,17 @@
 		"version": "Version {{version}}",
 		"releaseLog": "Release Notes",
 		"checkForUpdates": "Check for Updates",
-		"contact": "Contact Developer"
+		"checkingForUpdates": "Checking...",
+		"releaseLogOpenFailed": "Unable to open release notes.",
+		"updaterUnavailable": "Updater is only available in the desktop app.",
+		"updateChecking": "Checking for updates...",
+		"upToDate": "You're on the latest version.",
+		"updateAvailable": "Update {{version}} found. Downloading now...",
+		"updateDownloading": "Downloading {{version}}... {{progress}}%",
+		"updateDownloadingUnknown": "Downloading {{version}}...",
+		"updateInstalling": "Installing {{version}}...",
+		"updateInstalled": "Update {{version}} installed. Restarting LexiCog...",
+		"updateFailed": "Update check failed."
 	},
 	"translateText": {
 		"selectTargetLanguage": "Target Language",

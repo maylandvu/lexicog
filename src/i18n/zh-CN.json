@@ -122,7 +122,17 @@
         "version": "版本 {{version}}",
         "releaseLog": "更新日志",
         "checkForUpdates": "检查更新",
-        "contact": "联系开发者"
+        "checkingForUpdates": "检查中...",
+        "releaseLogOpenFailed": "无法打开更新日志。",
+        "updaterUnavailable": "仅桌面应用支持自动更新。",
+        "updateChecking": "正在检查更新...",
+        "upToDate": "当前已是最新版本。",
+        "updateAvailable": "发现新版本 {{version}}，正在下载...",
+        "updateDownloading": "正在下载 {{version}}... {{progress}}%",
+        "updateDownloadingUnknown": "正在下载 {{version}}...",
+        "updateInstalling": "正在安装 {{version}}...",
+        "updateInstalled": "已安装更新 {{version}}，正在重新启动 LexiCog...",
+        "updateFailed": "检查更新失败。"
     },
     "translateText": {
         "selectTargetLanguage": "目标语言",

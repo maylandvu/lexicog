@@ -18,6 +18,13 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/swift-ocr/.build/
 
+# Tauri updater signing material
+*.key
+*.key.pub
+*.pem
+*.pem.pub
+.tauri/
+
 # Local environment and app data
 .env
 .env.*
