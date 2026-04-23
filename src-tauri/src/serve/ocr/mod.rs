@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 mod macos_builtin_ocr;
+
 mod prompt_template;
 
 use crate::{
@@ -11,7 +12,11 @@ use anyhow::{anyhow, Context, Error, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::{engine::general_purpose, Engine as _};
 use tauri::{ipc::Channel, AppHandle, Emitter};
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
+
+#[cfg(target_os = "macos")]
+use tokio::sync::oneshot;
+
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -37,6 +42,7 @@ pub async fn serve_ocr(
     height: u32,
 ) -> Result<(), String> {
     let original_image: Vec<u8> = selected_image_state.lock().await.bin.clone();
+
     let cropped_image = crop_and_convert(original_image, offset_x, offset_y, width, height)
         .map_err(|e| {
             format!(
@@ -45,12 +51,33 @@ pub async fn serve_ocr(
             )
         })?;
 
-    if cfg!(target_os = "macos") {
+    /*
+     * macOS support:
+     * Use Apple's built-in OCR first.
+     *
+     * Important:
+     * Do NOT use `if cfg!(target_os = "macos")`.
+     * That still compiles the macOS code on Windows.
+     *
+     * Use `#[cfg(target_os = "macos")]` so Windows completely ignores
+     * this block at compile time.
+     */
+    #[cfg(target_os = "macos")]
+    {
         let cropped_image_copy = cropped_image.clone();
         let (tx, rx) = oneshot::channel::<Result<String>>();
+        let languages_for_macos = languages.clone();
+
         app.run_on_main_thread(move || {
-            let refs: Vec<&str> = languages.iter().map(|s| s.as_str()).collect();
-            if tx.send(macos_builtin_ocr::recognize(&cropped_image_copy, Some(&refs))).is_err() {
+            let refs: Vec<&str> = languages_for_macos.iter().map(|s| s.as_str()).collect();
+
+            if tx
+                .send(macos_builtin_ocr::recognize(
+                    &cropped_image_copy,
+                    Some(&refs),
+                ))
+                .is_err()
+            {
                 log::error!(
                     "{:#}",
                     anyhow!(
@@ -59,17 +86,19 @@ pub async fn serve_ocr(
                     .context("serve OCR")
                 );
             }
-        }).map_err(|e| {
+        })
+        .map_err(|e| {
             format!(
                 "{:#}",
                 Error::from(e).context("serve OCR: run built-in macOS OCR call on main thread")
             )
         })?;
+
         match rx.await {
             Ok(Ok(text)) => {
                 if text.trim().is_empty() {
                     log::warn!(
-                        "macos built-in OCR returned empty text, fallback to configured OCR model"
+                        "macOS built-in OCR returned empty text, fallback to configured OCR model"
                     );
                 } else {
                     channel.send(Some(text.clone())).map_err(|e| {
@@ -78,6 +107,7 @@ pub async fn serve_ocr(
                             Error::from(e).context("serve OCR: send built-in OCR text to frontend")
                         )
                     })?;
+
                     channel.send(None).map_err(|e| {
                         format!(
                             "{:#}",
@@ -85,12 +115,15 @@ pub async fn serve_ocr(
                                 .context("serve OCR: send completion signal for built-in OCR")
                         )
                     })?;
+
                     return Ok(());
                 }
             }
+
             Ok(Err(e)) => {
                 log::error!("{:#}", e.context("serve OCR: run built-in macOS OCR"));
             }
+
             Err(e) => {
                 log::error!(
                     "{:#}",
@@ -100,18 +133,36 @@ pub async fn serve_ocr(
         }
     }
 
+    /*
+     * Windows support:
+     * Windows does not use macos_builtin_ocr.
+     * It falls through to the configured model-based OCR below.
+     *
+     * This means your Windows app can compile and run, but OCR requires
+     * an OCR model/client to be configured in the app.
+     */
+    #[cfg(target_os = "windows")]
+    {
+        log::warn!(
+            "Windows does not support macOS built-in OCR. Falling back to configured OCR model."
+        );
+    }
+
     let model_id = ocr_model_state.read().await.id.clone().ok_or(format!(
         "{:#}",
         anyhow!("no OCR model is currently configured").context("serve OCR: resolve active model")
     ))?;
+
     let prompt = prompt_template::OCR_PROMPT_TEMPLATE.to_string();
 
     let task_id = Uuid::new_v4().to_string();
     let cancel_token = CancellationToken::new();
+
     {
         let mut pending_cancel_signals_guard = pending_cancel_signals_state.lock().await;
         pending_cancel_signals_guard.insert(task_id.clone(), cancel_token.clone());
     }
+
     app.emit("ocr-task-started", task_id.clone()).map_err(|e| {
         format!(
             "{:#}",
@@ -120,18 +171,24 @@ pub async fn serve_ocr(
     })?;
 
     let result: Result<()> = tokio::select! {
-        _ = cancel_token.cancelled() =>
-            Err(anyhow!("ocr generation cancelled by user").context("serve OCR")),
+        _ = cancel_token.cancelled() => {
+            Err(anyhow!("ocr generation cancelled by user").context("serve OCR"))
+        }
 
         res = async move {
             let client_hub_guard = client_hub_state.read().await;
+
             if let Some(client) = &client_hub_guard.ocr_client {
-                let _ = client.execute_ocr_task(
-                    channel,
-                    prompt,
-                    general_purpose::STANDARD.encode(&cropped_image),
-                    model_id,
-                ).await.context("serve OCR: execute model-based OCR streaming task")?;
+                let _ = client
+                    .execute_ocr_task(
+                        channel,
+                        prompt,
+                        general_purpose::STANDARD.encode(&cropped_image),
+                        model_id,
+                    )
+                    .await
+                    .context("serve OCR: execute model-based OCR streaming task")?;
+
                 Ok(())
             } else {
                 Err(anyhow!("no OCR client is available in ClientHub").context("serve OCR"))
@@ -153,14 +210,16 @@ fn crop_and_convert(
     height: u32,
 ) -> Result<Vec<u8>> {
     let img = image::load_from_memory(&bin_img).context("crop OCR image: decode source image")?;
+
     let img_width = img.width();
     let img_height = img.height();
 
     if width == 0 || height == 0 {
         return Err(
-            anyhow!("crop region is empty (width or height is zero)").context("crop OCR image")
+            anyhow!("crop region is empty: width or height is zero").context("crop OCR image")
         );
     }
+
     if offset_x >= img_width || offset_y >= img_height {
         return Err(anyhow!(
             "crop origin out of bounds: ({}, {}) for image {}x{}",
@@ -174,10 +233,14 @@ fn crop_and_convert(
 
     let crop_width = width.min(img_width.saturating_sub(offset_x));
     let crop_height = height.min(img_height.saturating_sub(offset_y));
+
     let cropped_img = img.crop_imm(offset_x, offset_y, crop_width, crop_height);
+
     let mut png_buf = std::io::Cursor::new(Vec::new());
+
     cropped_img
         .write_to(&mut png_buf, image::ImageFormat::Png)
         .context("crop OCR image: encode cropped region as PNG")?;
+
     Ok(png_buf.into_inner())
 }
