@@ -30,7 +30,7 @@ use util::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -39,7 +39,6 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -49,25 +48,41 @@ pub fn run() {
                     ) {
                         return;
                     }
-                    if try_handle_shortcut::<TranslateTextShortcutHandle>(app, &event, shortcut) {
+
+                    if try_handle_shortcut::<TranslateTextShortcutHandle>(
+                        app, &event, shortcut,
+                    ) {
                         return;
                     }
+
                     try_handle_shortcut::<OcrShortcutHandle>(app, &event, shortcut);
                 })
                 .build(),
         )
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    builder
         .setup(|app| {
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             let app_data_path = app.path().app_local_data_dir()?;
             let db_path = app_data_path.join("database.sqlite");
+
             let sqlite_interface =
                 tauri::async_runtime::block_on(async { db::SqliteInterface::new(db_path).await })?;
+
             app.manage(sqlite_interface);
 
             let handle_of_le_lookup_shortcut = LookupLexicalEntryShortcutHandle::new(app.handle())?;
             let handle_of_text_translate_shortcut = TranslateTextShortcutHandle::new(app.handle())?;
             let handle_of_ocr_shortcut = OcrShortcutHandle::new(app.handle())?;
+
             app.manage(std::sync::RwLock::new(handle_of_ocr_shortcut));
             app.manage(std::sync::RwLock::new(handle_of_le_lookup_shortcut));
             app.manage(std::sync::RwLock::new(handle_of_text_translate_shortcut));
@@ -76,14 +91,18 @@ pub fn run() {
                 tauri::async_runtime::block_on(async { ClientHub::new(app.handle()).await })?;
 
             let review_progresses = HashMap::<String, serve::review::ReviewProgress>::new();
-            app.manage(tokio::sync::Mutex::new(review_progresses));
 
+            app.manage(tokio::sync::Mutex::new(review_progresses));
             app.manage(tokio::sync::RwLock::new(client_hub));
 
             app.manage(tokio::sync::Mutex::new(SelectedText {
                 text: String::new(),
             }));
-            app.manage(tokio::sync::Mutex::new(SelectedImage { bin: Vec::new() }));
+
+            app.manage(tokio::sync::Mutex::new(SelectedImage {
+                bin: Vec::new(),
+            }));
+
             app.manage(tokio::sync::Mutex::new(PendingInputs::new()));
             app.manage(tokio::sync::Mutex::new(PendingCancelSignals::new()));
 
@@ -100,7 +119,10 @@ pub fn run() {
             }));
 
             app.manage(tokio::sync::RwLock::new(TargetLangOfLexicalEntryLookup {
-                lang: impl_read_config_from_store(app.handle(), "targetLangOfLexicalEntryLookup")?,
+                lang: impl_read_config_from_store(
+                    app.handle(),
+                    "targetLangOfLexicalEntryLookup",
+                )?,
             }));
 
             app.manage(tokio::sync::RwLock::new(TargetLangOfTranslation {
@@ -179,6 +201,7 @@ pub fn run() {
             } => {
                 if label == "main" {
                     api.prevent_close();
+
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.hide();
                     }
